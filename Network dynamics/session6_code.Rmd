@@ -1,0 +1,701 @@
+---
+title: 'Complex and Social Networks: Lab session 6'
+subtitle: 'Network dynamics'
+output:
+  pdf_document:
+    fig_crop: no
+    fig_height: 4
+    number_sections: yes
+    toc: yes
+  html_document:
+    toc: yes
+author: Sergio Mosquera & Egon Ferri
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+```{r message=FALSE, warning=FALSE, error=FALSE}
+require(igraph, quietly = T)
+require(viridis, quietly = T)
+require(kableExtra,quietly = T)
+require("stats4", quietly = T) # for MLE
+require("VGAM", quietly = T) # for the Riemann-zeta function
+```
+
+# Introduction
+
+In this session, we are going to simulate different network growth models and
+analyse their properties from a statistical perspective. This session has three
+goals: achieving a better understanding of the dynamical principles behind the
+Barab´asi-Albert model, improving our simulation skills, and applying curve
+fitting methods (model selection).
+
+This session consists of simulating and analyzing the mathematical properties
+of the Barabasi-Albert model and two modified versions: one where preferential
+attachment is replaced by random attachment and another where vertex growth
+is suppressed [Barabasi et al., 1999]. For every variant we will have to study
+the growth of vertex degrees over time and their degree distribution.
+
+
+# Results
+
+## The Barabasi-Albert model: growth + preferential attachment
+
+The parameters that we choose, that seem to give us good results, are
+
+$m_0 = 1$
+$n_0 = 100$
+
+With a lattice as a starting graph.
+```{r warning=FALSE}
+main_function<- function(preferential_attachment=1, n=100, scaled=F, degsequence=F){
+  #create a watts-strogatz of n nodes with every node attached only to his two neigbors
+  g<-make_lattice(n)
+  tomo=c(1, 10, 100, 1000) #starting times of nodes that we have to monitor
+  to_monitor=tomo+n #add the nuber of starting nodes because barabasi.game as a input wants the 
+                    #total number of nodes to reach
+  steps=seq(from=to_monitor[4]+50, to= 10^4, by=50) #all the steps in which we want to store results
+  
+  
+  steps_tot<-c(to_monitor, steps)
+
+  seq_1=replicate(103, 0) #initialize empty vectors for better coding
+  seq_2=replicate(103, 0)
+  seq_3=replicate(103, 0)
+  seq_4=replicate(103, 0)
+  #first iteration
+  g<-barabasi.game(n = steps_tot[1], start.graph = g, directed = F, 
+                   power = preferential_attachment, m=1)
+  seq_1[1]=degree(g, v=to_monitor[1])
+  #second iter
+  g<-barabasi.game(n = steps_tot[2], start.graph = g, directed = F, 
+                   power = preferential_attachment, m=1)
+  seq_1[2]=degree(g, v=to_monitor[1])
+  seq_2[2]=degree(g, v=to_monitor[2])
+  #third iter
+  g<-barabasi.game(n = steps_tot[3], start.graph = g, directed = F, 
+                   power = preferential_attachment, m=1)
+  seq_1[3]=degree(g, v=to_monitor[1])
+  seq_2[3]=degree(g, v=to_monitor[2])
+  seq_3[3]=degree(g, v=to_monitor[3])
+  #fourth iter
+  g<-barabasi.game(n = steps_tot[4], start.graph = g, directed = F, 
+                   power = preferential_attachment, m=1)
+  seq_1[4]=degree(g, v=to_monitor[1])
+  seq_2[4]=degree(g, v=to_monitor[2])
+  seq_3[4]=degree(g, v=to_monitor[3])  
+  seq_4[4]=degree(g, v=to_monitor[4])
+  
+  #all the others iterations
+  for (i in 5:length(steps_tot)) {
+    
+    g<-barabasi.game(n = steps_tot[i], start.graph = g, directed = F, 
+                     power = preferential_attachment, m=1)
+    
+  seq_1[i]=degree(g, v=to_monitor[1])
+  seq_2[i]=degree(g, v=to_monitor[2])
+  seq_3[i]=degree(g, v=to_monitor[3])  
+  seq_4[i]=degree(g, v=to_monitor[4])
+  }
+  #the result that we want to analyze:
+  
+  if (scaled) { # scaled growth of vertex degree over time
+    if (preferential_attachment == 1)
+      return(c(seq_1*(tomo[1]^0.5), seq_2*(tomo[2]^0.5), seq_3*(tomo[3]^0.5), seq_4*(tomo[4]^0.5)))
+    else if(preferential_attachment == 0)
+      return(c(seq_1*(log(seq_1 + tomo[1] - 1)), seq_2*(log(seq_2 + tomo[2] - 1)), seq_3*(log(seq_3 + tomo[3] - 1)), seq_4*(log(seq_4 + tomo[4] - 1))))
+  }  else if (!degsequence){ # growth of vertex degree over time
+    return(c(seq_1, seq_2, seq_3, seq_4))
+  } else{ # final degree sequence
+    return(sort(degree(g), decreasing = T))
+  }
+}
+```
+
+### Vertex growth degree
+
+#### Check visually if the rescaled variant of vertex growth is about the same for every vertex chosen
+
+The growth of $k_i$, the degree of the i-th vertex, as a function of time obeys:
+
+$$
+\begin{aligned}
+  k_{i}(t) \approx m_{0}\left(\frac{t}{t_{i}}\right)^{1 / 2}
+\end{aligned}
+$$
+
+This means that:
+
+$$
+\begin{aligned}
+  k_{i}^{\prime}(t) &=t_{i}^{1 / 2} k_{i}(t) \approx m_{0} t^{1 / 2}
+  \end{aligned}
+$$
+should be about the same for every vertex, regardless of its arrival time.
+
+```{r warning=FALSE}
+plotter<- function(preferential_attachment=1, n=100, nsimul=100){
+  to_monitor=c(1, 10, 100, 1000)+n
+  steps=seq(from=to_monitor[4]+50, to= 10^4, by=50)
+  steps_tot<-c(to_monitor, steps)
+  
+  #simulate nsimul time and take an average
+  result<-replicate(nsimul,main_function(preferential_attachment = preferential_attachment,
+                                         n=n, scaled = T))
+  result<-matrix(rowMeans(result), ncol=4)
+  
+  #plot the results
+  cols=viridis(5)
+  param=max(result[dim(result)[1],])
+
+  plot(steps_tot,result[,1],type = 'l', col=cols[1], lwd= 2, ylim = c(0, param+10), xlab = 'time', ylab = 'rescaled degree', main = 'Rescaled vertex degree over time')
+  lines(steps_tot[2:length(steps_tot)],result[,2][2:length(steps_tot)], col=cols[2], lwd= 2)
+  lines(steps_tot[3:length(steps_tot)],result[,3][3:length(steps_tot)], col=cols[3], lwd= 2)
+  lines(steps_tot[4:length(steps_tot)],result[,4][4:length(steps_tot)], col=cols[4], lwd= 2)
+  if(preferential_attachment == 1)
+    lines(steps_tot[1:length(steps_tot)],((steps_tot[1:length(steps_tot)])^0.5), col=cols[5], lwd= 2, lty=2)
+  else if(preferential_attachment == 0)
+    lines(steps_tot[1:length(steps_tot)],(log(steps_tot[1:length(steps_tot)])), col=cols[5], lwd= 2, lty=2)
+  legend("topleft", legend=c("vertex started a time 1", "vertex started a time 10","vertex started a time 100","vertex started a time 1000","theoretical curve"),
+       col=cols, cex=0.8, lty=c(1,1,1,1,2))
+  #return(list(x=steps_tot[1:length(steps_tot)], y=(steps_tot[1:length(steps_tot)])^0.5))
+}
+```
+
+
+```{r warning=FALSE}
+set.seed(5000)
+plotter(nsimul = 100, n=100) #maybe increase nsimul at the end but results change (best model is 2+ 3+ or 4+ depending on
+
+```
+
+We can see that our theoretical result is not really confirmed graphically . The theoretical curve (exponent 1/2) seems a good approximation only to the scaled timeseries that starts at node $1000$, and for all the others overfits. We tried to see if once we reach an high starting time the result was stable, but for $t_i$ with $i >1000$ it underfits. We tried to explore a little bit to understand what's going on, but with scarse results. We discovered that the starting number of the lattice influences the timeseries a bit, but that does not seems the main problem.
+
+
+#### Model fit
+
+```{r warning=FALSE}
+extract_results <- function(){
+  ctrl <- list(maxiter=1000, warnOnly = T)
+  for (i in 1:4) {
+    y<-result[,i]
+  
+    #model 0
+    a_initial = 1
+    nonlinear_model_0 = nls(y ~ a * x, start = list(a = a_initial), control=ctrl)
+    AIC_0 = AIC(nonlinear_model_0)
+    s_0 = sqrt(deviance(nonlinear_model_0) / df.residual(nonlinear_model_0))
+    a_opt_0 = as.numeric(coef(nonlinear_model_0)[1])
+    
+    #model 1
+    
+    a_initial = 1
+    nonlinear_model_1 = nls(y ~ a * x ^ 0.5, start = list(a = a_initial), control=ctrl)
+    AIC_1 = AIC(nonlinear_model_1)
+    s_1 = sqrt(deviance(nonlinear_model_1) / df.residual(nonlinear_model_1))
+    a_opt_1 = as.numeric(coef(nonlinear_model_1)[1])
+    
+    #model 2
+    
+    a_initial = 1
+    b_initial = 0.5
+    nonlinear_model_2 = nls(y ~ a * x ^ b, start = list(a = a_initial,  b =
+    b_initial), control=ctrl)
+    AIC_2 = AIC(nonlinear_model_2)
+    s_2 = sqrt(deviance(nonlinear_model_2) / df.residual(nonlinear_model_2))
+    a_opt_2 = as.numeric(coef(nonlinear_model_2)[1])
+    b_opt_2 = as.numeric(coef(nonlinear_model_2)[2])
+    
+    #model 3
+    
+    a_initial = 10
+    c_initial = 0
+    nonlinear_model_3 = nls(y ~ a * exp(c * x), start = list(a = a_initial,  c =
+    c_initial), control=ctrl)
+    AIC_3 = AIC(nonlinear_model_3)
+    s_3 = sqrt(deviance(nonlinear_model_3) / df.residual(nonlinear_model_3))
+    a_opt_3 = as.numeric(coef(nonlinear_model_3)[1])
+    c_opt_3 = as.numeric(coef(nonlinear_model_3)[2])
+    
+    #model 4
+    
+    a_initial = 0.73
+    d_initial = 10000
+    
+    #best we can obtain, for smaller lower on d we got error, for upper we got worse AIC
+    nonlinear_model_4 = nls(
+    y ~ a * (log(x + d)),
+    start = list(a = a_initial, d = d_initial)
+    ,
+    algorithm = 'port',
+    lower = c(-1000, -1149)
+    , control=ctrl)
+    AIC_4 = AIC(nonlinear_model_4)
+    s_4 = sqrt(deviance(nonlinear_model_4) / df.residual(nonlinear_model_4))
+    a_opt_4 = as.numeric(coef(nonlinear_model_4)[1])
+    d_opt_4 = as.numeric(coef(nonlinear_model_4)[2])
+    
+    
+    #model 0+
+    
+    a_initial = 1
+    d_initial = 0
+    nonlinear_model_0pl = nls(y ~ a * x + d, start = list(a = a_initial, d =
+    d_initial), control=ctrl)
+    AIC_0pl = AIC(nonlinear_model_0pl)
+    s_0pl = sqrt(deviance(nonlinear_model_0pl) / df.residual(nonlinear_model_0pl))
+    a_opt_0pl = as.numeric(coef(nonlinear_model_0pl)[1])
+    d_opt_0pl = as.numeric(coef(nonlinear_model_0pl)[2])
+    
+    #model 1+
+    
+    a_initial = 1
+    d_initial = 0
+    nonlinear_model_1pl = nls(y ~ a * (x ^ 0.5) + d, start = list(a = a_initial, d = d_initial), control=ctrl)
+    AIC_1pl = AIC(nonlinear_model_1pl)
+    s_1pl = sqrt(deviance(nonlinear_model_1pl) / df.residual(nonlinear_model_1pl))
+    a_opt_1pl = as.numeric(coef(nonlinear_model_1pl)[1])
+    d_opt_1pl = as.numeric(coef(nonlinear_model_1pl)[2])
+    #model 2+
+    
+    a_initial = 1
+    b_initial = 0.5
+    d_initial = 0
+    nonlinear_model_2pl = nls(y ~ a * (x ^ b) + d, start = list(a = a_initial,  b =
+    b_initial, d = d_initial), control=ctrl)
+    AIC_2pl = AIC(nonlinear_model_2pl)
+    s_2pl = sqrt(deviance(nonlinear_model_2pl) / df.residual(nonlinear_model_2pl))
+    a_opt_2pl = as.numeric(coef(nonlinear_model_2pl)[1])
+    b_opt_2pl = as.numeric(coef(nonlinear_model_2pl)[2])
+    d_opt_2pl = as.numeric(coef(nonlinear_model_2pl)[3])
+    #model 3+
+    
+    a_initial = a_opt_3
+    c_initial = c_opt_3
+    d_initial = -100
+    nonlinear_model_3pl = nls(y ~ a * (exp(c * x)) + d, start = list(a = a_initial,  c =
+    c_initial, d = d_initial), control=ctrl)
+    AIC_3pl = AIC(nonlinear_model_3pl)
+    s_3pl = sqrt(deviance(nonlinear_model_3pl) / df.residual(nonlinear_model_3pl))
+    a_opt_3pl = as.numeric(coef(nonlinear_model_3pl)[1])
+    c_opt_3pl = as.numeric(coef(nonlinear_model_3pl)[2])
+    d_opt_3pl = as.numeric(coef(nonlinear_model_3pl)[3])
+    #model 4+
+    
+    a_initial = 0.73
+    d_initial = 10000
+    d2_initial = 0
+    nonlinear_model_4pl = nls(
+    y ~ a * (log(x + d)) + d2,
+    start = list(a = a_initial, d = d_initial, d2 = d2_initial),
+    algorithm = 'port',
+    lower = c(-1000, -1149,-1000)
+    , control=ctrl)
+    #best we can obtain, for smaller lower on d we got error, for upper we got worse AIC
+    
+    AIC_4pl = AIC(nonlinear_model_4pl)
+    s_4pl = sqrt(deviance(nonlinear_model_4pl) / df.residual(nonlinear_model_4pl))
+    a_opt_4pl = as.numeric(coef(nonlinear_model_4pl)[1])
+    d_opt_4pl = as.numeric(coef(nonlinear_model_4pl)[2])
+    d2_opt_4pl = as.numeric(coef(nonlinear_model_4pl)[3])
+    
+    #results
+    
+    len_aic = c(AIC_0,
+    AIC_1,
+    AIC_2,
+    AIC_3,
+    AIC_4,
+    AIC_0pl,
+    AIC_1pl,
+    AIC_2pl,
+    AIC_3pl,
+    AIC_4pl)
+    len_parameters = c(
+    a_opt_0,
+    a_opt_1,
+    a_opt_2,
+    b_opt_2,
+    a_opt_3,
+    c_opt_3,
+    a_opt_4,
+    d_opt_4,
+    a_opt_0pl,
+    d_opt_0pl,
+    a_opt_1pl,
+    d_opt_1pl,
+    a_opt_2pl,
+    b_opt_2pl,
+    d_opt_2pl,
+    a_opt_3pl,
+    c_opt_3pl,
+    d_opt_3pl,
+    a_opt_4pl,
+    d_opt_4pl,
+    d2_opt_4pl
+    )
+    len_result = len_aic - (min(len_aic))
+    
+    AIC[paste0('timeserie', as.character(i))] = len_aic
+    parameters[paste0('timeserie', as.character(i))] = len_parameters
+    results[paste0('timeserie', as.character(i))] = len_result
+  }
+  return(list(AIC=AIC, parameters=parameters, results=results))
+}
+```
+
+```{r warning=FALSE}
+set.seed(1000)
+nsimul=100
+n=100
+preferential_attachment=1
+result<-replicate(nsimul,main_function(preferential_attachment = preferential_attachment,
+                                       n=n,scaled = F))
+result<-matrix(rowMeans(result), ncol=4)
+result<- result[5:(dim(result)[1]),]
+```
+
+```{r warning=FALSE}
+AIC <- data.frame(matrix(nrow = 10, ncol = 0))
+results <- data.frame(matrix(nrow = 10, ncol = 0))
+parameters <- data.frame(matrix(nrow = 21, ncol = 0))
+ss <- data.frame(matrix(nrow = 10, ncol = 0))
+
+to_monitor=c(1, 10, 100, 1000) + n
+x<-seq(from=to_monitor[4]+50, to= 10^4, by=50)
+```
+
+
+```{r warning=FALSE}
+fit_results <- extract_results()
+
+kable(t(fit_results$AIC), col.names = c("0", "1", "2", "3", "4","0+", "1+", "2+", "3+","4+"), caption = "Akaike information criterion of each model", format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options=c("scale_down",'HOLD_position'))
+
+  kable(t(fit_results$results), col.names = c("0", "1", "2", "3", "4","0+", "1+", "2+", "3+","4+"), caption = "AIC differences with respect to the best AIC in our ensemble of models", format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options=c("scale_down",'HOLD_position'))
+row.names(fit_results$parameters)=c("0: a","1: a", "2: a", "2: b", "3: a", "3: c", "4: a","4: d","0+: a", "0+: d", "1+: a", "1+: d", "2+: a", "2+: b", "2+: d", "3+: a", "3+: c", "3+: d", "4+: a", "4+: d", "4+: d2")
+
+kable(fit_results$parameters, caption = "best fittings for model parameters", format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options=c("scale_down",'HOLD_position'))
+```
+
+As discussed, model 1 should be a good option to represent the time series. Despite this, the AIC results show a different situation, instead it shows that the models 2+ outperforms for timeseries 1 and 2, while 4+ does the same for timeseries 3 and 4. So in this case for timeseries starting at further moments in time the model with the logarithmic approach performs better than a potential one, while with smaller values is the other way round. At a first glance, we may assume that this behavior will be kept if the simulation was larger and we took more measures at further points of time, but in that case for the values that now are fitted better by model 4+, may be represented by model 2+ instead. But this assumption has to take into account the growth of the degree distribution in the Barabasi Albert graph, which, as can be seen in above plots, gets slower in time.
+
+Also we obtain the optimum parameters for each function from the proposed ensemble. 
+
+### Degree Distribution
+
+```{r warning=FALSE}
+# faster function if we need only last degseq 
+light_degree_funct<- function(n=100, nmax=10^5, power=1){
+  g<-make_lattice(n) 
+  g<-barabasi.game(n = nmax, power = power, directed = F, start.graph = g)
+  return(sort(degree(g), decreasing = T))
+}
+```
+
+
+
+```{r warning=FALSE}
+x<-light_degree_funct()
+plot(x, col=viridis(length(x)), xlab = 'Time', ylab = 'Sorted degree distribution', main = 'Lin-Lin scale')
+```
+
+The graphical representation with the above plot let us check that there are insights of a Power Law in the degree distribution. This can be confirmed by the following plot using the log-log scale.
+
+```{r warning=FALSE}
+plot(x, log = "xy", col=viridis(length(x)), xlab = 'Time', ylab = 'Sorted degree distribution', main = 'Log-Log scale')
+```
+
+For this plot we are taking the logarithm of the data in order to show whether we have a Power Law or not in our data. As we can see in the graphical representation, the linearity of the data suggests the existence of this law. Next steps consist in checking which is the model that better fits the funcion giving the representation of this phenomenon.
+
+```{r warning=FALSE}
+x_list <- 1:max(x)
+degree_spectrum <- table(x)
+counts <- unname(degree_spectrum)
+degrees <- as.numeric(names(degree_spectrum))
+```
+
+```{r warning=FALSE}
+plot(degrees, counts, xlab = 'Degree distribution', ylab = 'Counter', log = "xy", col=viridis(length(degrees)))
+```
+
+
+
+#### Model Fitting
+
+```{r warning=FALSE}
+# Model 1: displaced Poisson distribution
+minus_log_likelihood_displaced_pois <- function(lambda) {
+  C <- sum(sapply(x, function(y) sum(log(2:y))))
+  return(-sum(x)*log(lambda)+length(x)*(lambda+log(1-exp(-lambda)))+C)
+}
+# Model 2: displaced geometric distribution
+minus_log_likelihood_geom_displaced <- function(q) {
+-(sum(x)-length(x)) * log(1-q) - length(x) * log(q)
+}
+# Model 3: restricted Zeta distribution
+minus_log_likelihood_zeta_restrict <- function() {
+  M <- sum(log(x))
+  return(3 * M + length(x) * log(1.202)) #from wikipedia! zeta of 3 is = 1.202...
+}
+# Model 4: Zeta distribution
+minus_log_likelihood_zeta <- function(gamma) {
+  M <- sum(log(x))
+  return(gamma * M + length(x) * log(zeta(gamma, deriv = 0)))
+}
+# Model 5: right-truncated Zeta distribution
+minus_log_likelihood_zeta_rtrunc <- function(gamma, kmax) {
+  M <- sum(log(x))
+  #kmax <- length(x)-1
+  #kmax <- max(x) # perhaps we need a larger a value (n-1???)
+  return(gamma * M + length(x) * log(sum((1:kmax)^(-gamma))))
+}
+# Model 6: Altmann function
+minus_log_likelihood_altmann <- function(gamma, delta) {
+  cinv <- sum(sapply(1:length(x),function(k) k^(-gamma)*exp(-delta*k)))
+  return(delta * sum(x) + gamma * sum(log(x)) + length(x) * log(cinv))
+}
+
+get_AIC <- function(m2logL,K,N) {
+  m2logL + 2*K*N/(N-K-1) 
+}
+```
+
+
+```{r warning=FALSE}
+compute_functions_practice2 <- function(x){
+  # M1
+  lambda0 <- list(sum(x)/length(x))
+  displ_pois <- mle(minuslogl = minus_log_likelihood_displaced_pois,
+                start = list(lambda = lambda0),
+                method = "L-BFGS-B",
+                lower = 1e-7)
+  
+  lambda_opt <- coef(displ_pois)
+  # M2
+  q0 <- length(x)/sum(x)
+  geom_displaced <- mle(minuslogl = minus_log_likelihood_geom_displaced, 
+              start = list(q = q0),
+              method = "L-BFGS-B",
+              lower = 1e-7,
+              upper = 1-1e-7)
+  
+  q_opt <- coef(geom_displaced)
+  
+  # M3
+  mlogL_zeta_restrict <- 2*minus_log_likelihood_zeta_restrict()
+  
+  # M4
+  gamma0 <- 1
+  mle_zeta <- mle(minuslogl = minus_log_likelihood_zeta, 
+              start = list(gamma = gamma0),
+              method = "L-BFGS-B",
+              lower = 1+1e-7)
+  
+  gamma_opt <- coef(mle_zeta)
+  # M5
+  kmax0 <- max(x)
+  zeta_rtrunc <- mle(minuslogl = minus_log_likelihood_zeta_rtrunc, 
+              start = list(gamma = gamma0, kmax = kmax0),
+              method = "L-BFGS-B",
+              lower = c(0,as.integer(max(x))+1))
+  
+  gamma_opt2 <- coef(zeta_rtrunc)[1]
+  kmax_opt <- coef(zeta_rtrunc)[2]
+  # M6
+  gamma0 <- 1
+  delta0 <- 0
+  altmann <- mle(minuslogl = minus_log_likelihood_altmann, 
+                start = list(gamma = gamma0, delta = delta0),
+                method = "L-BFGS-B",
+                lower = c(0,0))
+  gamma_opt3 <- coef(altmann)[1]
+  delta_opt <- coef(altmann)[2]
+  
+  # AIC
+  AIC_pois=get_AIC(attributes(summary(displ_pois))$m2logL, 1, length(x))
+  AIC_geom=get_AIC(attributes(summary(geom_displaced))$m2logL, 1, length(x))
+  AIC_zetares=get_AIC(mlogL_zeta_restrict, 0, length(x))
+  AIC_zeta=get_AIC(attributes(summary(mle_zeta))$m2logL, 1, length(x))
+  AIC_zetatrunc=get_AIC(attributes(summary(zeta_rtrunc))$m2logL, 2, length(x))
+  AIC_altmann=get_AIC(attributes(summary(altmann))$m2logL, 2, length(x))
+  
+  len_aic=c(AIC_pois, AIC_geom, AIC_zetares, AIC_zeta, AIC_zetatrunc, AIC_altmann)
+  len_parameters=c(lambda_opt, q_opt,gamma_opt, gamma_opt2, kmax_opt, gamma_opt3, delta_opt)
+  return(list(len_aic=len_aic, len_parameters=len_parameters))
+}
+```
+
+```{r warning=FALSE}
+res <- compute_functions_practice2(x)
+
+kable(t(res$len_aic), col.names = c("Displ. Poisson", "Displ. Geom", "Restricted Zeta", "Zeta", "R-T Zeta", "Menzerath-Altmann"), caption = "AIC differences with respect to the best AIC in our ensemble of models", format="latex", booktabs=TRUE) %>% 
+kable_styling(latex_options=c("scale_down",'HOLD_position'))
+
+kable(t(res$len_parameters),col.names = c("1: $\\lambda$", "2: $q$","4: $\\gamma$", "$5: \\gamma_2$", "$kmax$", "6: $\\gamma_3$", "$\\delta$"), caption = "best fit for model parametrs", format="latex", booktabs=TRUE, escape = FALSE) %>% 
+kable_styling(latex_options=c("scale_down",'HOLD_position'))
+```
+
+From the AIC table we derive that the model providing the best fitting is the Altmann function, in spite of the suggested one which was the Right Truncated Zeta with exponent -3. In addition to that, the optimum parameter for $\gamma$ chosen by the Zeta distribution is far from the suggested one, instead we get around 2.15.
+
+
+```{r echo=FALSE}
+# Initial values 
+gamma0 <- 1
+delta0 <- 0
+
+# Fit 
+altmann <- mle(minuslogl = minus_log_likelihood_altmann, 
+              start = list(gamma = gamma0, delta = delta0),
+              method = "L-BFGS-B")
+
+# MLE estimate
+gamma_opt3 <- coef(altmann)[1]
+delta_opt <- coef(altmann)[2]
+gamma_opt <- res$len_parameters[[3]]
+```
+
+```{r echo=FALSE}
+# Compare the degree spectrums
+
+cinv <- sum(sapply(1:length(x), function(k) k^(-gamma_opt3) * exp(-delta_opt*k)))
+plot(degrees, counts, log="xy", col=viridis(100), xlab = "Degree Distribution", ylab = "Counter")
+lines(x_list, length(x)*sapply(x_list, function(x) x^(-gamma_opt3)*exp(-delta_opt*x)/cinv), col="darkorchid", lwd=3)
+
+legend('topright', legend=parse(text=sprintf('Menzerath-Altmann(%s, %s)',round(gamma_opt,2), round(delta_opt,2))), col='darkorchid', lwd=3)
+```
+
+We have concluded analytically that the Menzerath-Altmann function is the one providing the best fitting for the data, but with the above plot we can also confirm this graphically. The fitting is almost perfect if we omit the dispersion that can be found at the end of the distribution.
+
+## Growth + random attachment
+
+### Vertex growth degree
+
+#### Check visually if the rescaled variant of vertex growth is about the same for every vertex chosen
+
+If preferential attachment is replaced by random attachment, the growth of ki (the degree of the i-th vertex) as a function of time obeys [Barab´asi et al., 1999]
+$$k_i(t) \approx m_0(log(m_0 + t - 1) - log(n_0 + t_i - 1) + 1)$$
+This means that
+$$
+k_i''(t) = k_i(t) + m_0log(n_0 + t_i - 1) - m_0 \approx m_0log(m_0 + t - 1).
+$$
+
+For `barabasi.game` R package we can tune some parameters in order to change the behavior of the preferential attachment, such that it becomes random. The probability of a node $i$ to generate an edge with some random node is calculated as $P(i) \sim k(i)^{power} + a$. Taking into account that we can modify the exponent, if set to 0 we will state that all the vertices have the same probability.
+
+```{r warning=FALSE}
+plotter(nsimul = 100, n=100, preferential_attachment = 0)
+```
+
+
+#### Model fit
+
+```{r warning=FALSE}
+set.seed(1000)
+nsimul=100
+n=100
+preferential_attachment=0
+result<-replicate(nsimul,main_function(preferential_attachment = preferential_attachment,
+                                       n=n,scaled = F))
+result<-matrix(rowMeans(result), ncol=4)
+result<- result[5:(dim(result)[1]),]
+```
+
+```{r warning=FALSE}
+AIC <- data.frame(matrix(nrow = 10, ncol = 0))
+results <- data.frame(matrix(nrow = 10, ncol = 0))
+parameters <- data.frame(matrix(nrow = 21, ncol = 0))
+ss <- data.frame(matrix(nrow = 10, ncol = 0))
+
+to_monitor=c(1, 10, 100, 1000) + n
+x<-seq(from=to_monitor[4]+50, to= 10^4, by=50)
+```
+
+
+```{r warning=FALSE}
+fit_results <- extract_results()
+
+kable(t(fit_results$AIC), col.names = c("0", "1", "2", "3", "4","0+", "1+", "2+", "3+","4+"), caption = "Akaike information criterion of each model", format = "latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options=c("scale_down",'HOLD_position'))
+
+  kable(t(fit_results$results), col.names = c("0", "1", "2", "3", "4","0+", "1+", "2+", "3+","4+"), caption = "AIC differences with respect to the best AIC in our ensemble of models", format = "latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options=c("scale_down",'HOLD_position'))
+row.names(fit_results$parameters)=c("0: a","1: a", "2: a", "2: b", "3: a", "3: c", "4: a","4: d","0+: a", "0+: d", "1+: a", "1+: d", "2+: a", "2+: b", "2+: d", "3+: a", "3+: c", "3+: d", "4+: a", "4+: d", "4+: d2")
+
+kable(fit_results$parameters, caption = "best fittings for model parameters", format = "latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options=c("scale_down",'HOLD_position'))
+```
+
+Focusing in the AIC values for the random attachment, we see that model 2+ outperforms in 2 out of 4 cases, while the model 4+ only does it once (timeseries 1). Although model 4+ is not giving the best fit for every case (as the guide suggested), the results are still very good in average for all the timeseries, being for every case either the first or the second (with a very low difference) model giving the best fit. So in absolute terms we would not say that is the model that gives the best predictions among all the ensemble of functions, but in relative terms we can confirm that, in average, is the model that shows the best behavior when using random attachment.
+
+Also if we relate to the parameters for the second part of the exercise, we can check that in fact the estimation of $a$ is around $m_0$ (initially set to 1), but we fail to match the hypotheses when computing the value of $d_2$, which was supposed to be 0 but instead we get much higher values for the timeseries where it did not provide the best fit and a very low one (-50) in the timeseries in which it outperforms.
+
+### Degree Distribution
+
+```{r warning=FALSE}
+x <- light_degree_funct(power = 0)
+x_list <- 1:max(x)
+degree_spectrum <- table(x)
+counts <- unname(degree_spectrum)
+degrees <- as.numeric(names(degree_spectrum))
+```
+
+```{r warning=FALSE}
+plot(degrees, counts, xlab = 'Degree distribution', ylab = 'Counter', log = "xy", col=viridis(length(degrees)))
+```
+
+
+
+#### Model Fitting
+
+```{r warning=FALSE}
+res <- compute_functions_practice2(x)
+
+kable(t(res$len_aic), col.names = c("Displ. Poisson", "Displ. Geom", "Restricted Zeta", "Zeta", "R-T Zeta", "Menzerath-Altmann"), caption = "AIC differences with respect to the best AIC in our ensemble of models", booktabs=TRUE) %>% 
+kable_styling(latex_options=c("scale_down",'HOLD_position'))
+
+kable(t(res$len_parameters),col.names = c("1: $\\lambda$", "2: $q$","4: $\\gamma$", "$5: \\gamma_2$", "$kmax$", "6: $\\gamma_3$", "$\\delta$"), caption = "best fit for model parametrs", booktabs=TRUE, escape = FALSE) %>% 
+kable_styling(latex_options=c("scale_down",'HOLD_position'))
+```
+
+Following the results of the AIC, we can see that the model giving the best fit with respect to the models now is no longer a power law, in this case the model giving the best fit is the Displaced Geometric one. It is important to remark that the Altmann function keeps being a good model for the prediction because the AIC results are quite similar to the best model.
+
+
+```{r echo=FALSE}
+# Initial values 
+q0 <- 0.1
+
+# Fit 
+geom_displaced <- mle(minuslogl = minus_log_likelihood_geom_displaced, 
+              start = list(q = q0),
+              method = "L-BFGS-B",
+              lower = 1e-7,
+              upper = 1-1e-7)
+
+# MLE estimate
+q_opt <- coef(geom_displaced)
+```
+
+```{r echo=FALSE}
+# Compare the degree spectrums
+
+plot(degrees, counts, log="xy", col=viridis(100), xlab = "Degree Distribution", ylab = "Counter")
+lines(x_list, length(x)*sapply(x_list, function(x) (1 - q_opt)^(x-1)*q_opt), col="darkorchid", lwd=3)
+
+legend('topright', legend=parse(text=sprintf('Displace-Geometric(%s)',round(q_opt,3))), col='darkorchid', lwd=3)
+```
+
+In the same way as we have done for the previous section, we want to support our analytical conclusions about the model fitting the best the current behavior by adding a graphical representation. And again, this plot gives us more confidence to confirm the hypothesis that the Geometric distribution is the one that predicst the best the random attachment phenomenon.
+
+
+# Conclusions
+
+This lab session allows us to make experiments over the Barabasi-Albert model and how the different approaches on the nodes attachment influences the network growth. In this case we have followed two different paths:
+
+First of all we ran the experiments following a preferential attachment strategy, the usual one in this model. We have taken measures at different points of time and realized that the growth of the vertices in the network was likely to be following a Power Law. Then, using an ensemble of functions we have checked our previous discovery and found out that the Altmann function was providing a very good fit for the evolution in the degree sequence of the graph at the different points of time.
+
+The second part of the experimentation used the random attachment strategy, in which every vertex has the same probability of obtaining a new edge in the next step of the graph generation. This strategy changes the experimentation drastically, instead we needed to show that this approach does not follow a Power Law. To do this we made the same experiments than before and have checked that the function providing the best fit was the Geometric distribution. So, there was no Power Law using the random attachment.
+

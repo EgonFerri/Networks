@@ -1,0 +1,436 @@
+---
+title: 'Complex and Social Networks: Lab session 2'
+subtitle: 'Model selection for degree distributions'
+output:
+  pdf_document:
+    fig_height: 4
+    toc: yes
+  html_document:
+    toc: yes
+author: Sergio H. Martínez Mateu & Egon Ferri
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE, include=FALSE}
+require("stats4", quietly = T) # for MLE
+require("VGAM", quietly = T) # for the Riemann-zeta function
+require('viridis', quietly = T) #graphical
+require('knitr', quietly = T) #graphical
+require('xtable', quietly = T)
+```
+
+# Introduction
+In this report we analyse 10 different networks corresponding to real data of syntactic dependency in different languages. The goal is to apply a model selection process, based on maximum likelihood estimation and the AIC criterion, to choose among a set of 6 potential models for the out-degree distribution.
+
+We hid a lot of the code for tidiness, it can be found mostly in the markdown, and in the script "checkthemethods" for the part that check the correctness of our code.
+
+## The data
+
+The following table shows some network metrics of the examples under study; N, the maximum degree, the mean degree and its inverse.
+
+```{r echo=FALSE}
+source("summary_table.R")
+```
+
+The following two plots show the out-degree distribution of the English network in the natural and in the log-log scale. The latter version, which shows a linear pattern, allows for a more in-depth inspection of the distribution.
+```{r echo=FALSE}
+degree_sequence <- read.table("data/data_out/English_out-degree_sequence.txt",
+                              header = FALSE)
+degree_spectrum <- table(degree_sequence)
+barplot(degree_spectrum, main = "English", 
+        xlab = "degree", ylab = "number of vertices", col=viridis(50), border='white')
+barplot(degree_spectrum, main = "English",
+xlab = "degree", ylab = "number of vertices", log = "xy", col=viridis(50), border='white')
+```
+
+# Methods
+
+## Minus log-likelihood of the models
+
+Here we define some functions that will be used to compute the log-likelihood of the models we want to fit. These functions will be fed later to an optimization algorithm in order to obtain the maximum likelihood estimates of the parameters.
+
+As an extra model to use in this exercise we have chosen the Menzerath-Altmann law model. Here is the derivation of the log-likelihood:
+
+$$
+\mathcal{L} = \sum_{i=1}^N\log(p(k_i)) = \sum_{i=1}^N \log(ck_i^{-\gamma}e^{-\delta k_i}) = N \log(c)-\delta\sum_{i=1}^Nk_i -\gamma \sum_{i=1}^N\log(k_i)
+$$
+
+```{r}
+# Model 1: displaced Poisson distribution
+minus_log_likelihood_displaced_pois <- function(lambda) {
+  C <- sum(sapply(x, function(y) sum(log(2:y))))
+  return(-sum(x)*log(lambda)+length(x)*(lambda+log(1-exp(-lambda)))+C)
+}
+# Model 2: displaced geometric distribution
+minus_log_likelihood_geom_displaced <- function(q) {
+-(sum(x)-length(x)) * log(1-q) - length(x) * log(q)
+}
+# Model 3: restricted Zeta distribution
+minus_log_likelihood_zeta_restrict <- function() {
+  M <- sum(log(x))
+  return(2 * M + length(x) * log(pi^2/6))
+}
+# Model 4: Zeta distribution
+minus_log_likelihood_zeta <- function(gamma) {
+  M <- sum(log(x))
+  return(gamma * M + length(x) * log(zeta(gamma, deriv = 0)))
+}
+# Model 5: right-truncated Zeta distribution
+minus_log_likelihood_zeta_rtrunc <- function(gamma, kmax) {
+  M <- sum(log(x))
+  #kmax <- length(x)-1
+  #kmax <- max(x) # perhaps we need a larger a value (n-1???)
+  return(gamma * M + length(x) * log(sum((1:kmax)^(-gamma))))
+}
+# Model 6: Altmann function
+minus_log_likelihood_altmann <- function(gamma, delta) {
+  cinv <- sum(sapply(1:length(x),function(k) k^(-gamma)*exp(-delta*k)))
+  return(delta * sum(x) + gamma * sum(log(x)) + length(x) * log(cinv))
+}
+```
+
+## Sample size corrected AIC
+
+As suggested, we used the sample size corrected version of the AIC:
+```{r}
+get_AIC <- function(m2logL,K,N) {
+m2logL + 2*K*N/(N-K-1) 
+}
+```
+
+## Optimization
+
+In order to find the maximum likelihood estimates we basically followed the given instructions. We used the function `mle` and the method `L-BFGS-B`. The bounds of the parameters were used if they were known, and in most of cases are trivial, except for the kmax of the right-truncated zeta and for the parameters of the Menzerath-altmann.
+For the right-truncated Zeta we used the maximum degree as the lower bound (since it's the lowest value possible) and, after a lot of trials and repeat, we used again the maximum degree as a starting value. The optimization seems very hard, and this choice seems to return always that value as the optimum; but, comparing to other parameters set, this is the set-up that performed better. 
+For the Menzerath-Altmann model we explored different initial seeds and found that delta had to be positive but close to 0, while gamma worked well starting from 1. The optimization worked without bounds for all languages except for Turkish. We solved this by specifying 0 as lower bound for both $\gamma$ and $\delta$.
+
+## Checking the methods
+
+Before applying the selection procedure to the real data, we perform here a control analysis. Using networks that were generated according to given degree distributions, we want check two things:
+
+  * That the selected model(the one with minimum AIC) coincides with the correct one
+  * That the MLE parameter of the selected model is close to the correct one
+
+```{r load, echo=FALSE}
+load("C:/Users/Egon/Desktop/Universita/UPC/CSN/session2/res.RData", envir = .GlobalEnv)
+```
+
+
+```{r echo=FALSE}
+
+files <- gsub("sample_of_","",simulated_datasets)
+files <- gsub(".txt","",files)
+names(results_AIC) <- files
+names(results_parameters) <- files
+```
+
+
+The results are:
+
+```{r echo=FALSE}
+
+kable((results_AIC), col.names = "AIC differences with respect to the best AIC in our ensemble of models")
+kable(results_parameters, col.names=c("Estimated parameter"))
+```
+
+In addiction, we saw that in some cases the right-truncated Zeta distribution is chosen instead of the Zeta distribution, although the AIC difference between them is generally pretty small. This might be explained by the fact that the right-truncated Zeta, which is a generalization of the Zeta, can be in practice very similar to the Zeta. Regarding the value of the optimized parameters, we see that indeed they are pretty close to the known values. This is a good indication, and gives us enough confidence to go to the next step.
+
+# Results
+
+## First example: 'english' network
+
+```{r}
+# 'english' network degree sequence
+x <- read.table("data/data_out/English_out-degree_sequence.txt",
+                              header = FALSE)$V1
+# These will be used later in the plots
+x_list <- 1:max(x)
+degree_spectrum <- table(x)
+counts <- unname(degree_spectrum)
+degrees <- as.numeric(names(degree_spectrum))
+```
+
+### Model 1: displaced Poisson
+
+```{r}
+# Initial values
+lambda0 <- list(sum(x)/length(x))
+
+# Fit
+displ_pois <- mle(minuslogl = minus_log_likelihood_displaced_pois, 
+              start = list(lambda = lambda0),
+              method = "L-BFGS-B",
+              lower = 1e-7)
+
+# MLE estimate
+lambda_opt <- coef(displ_pois)
+```
+
+```{r echo=FALSE, warning=FALSE}
+# Compare the degree spectrums
+plot(degrees, counts, log = "xy", ylim = c(1, 10000), col=viridis(length(degrees)))
+lines(degrees, length(x)*sapply(degrees, function(x) lambda_opt^x*exp(-lambda_opt)/(factorial(x)*(1-exp(-lambda_opt)))), col = "darkorchid", lwd=3)
+legend('topright', legend=parse(text=sprintf('Poisson (%s)',round(lambda_opt,2))), col='darkorchid', lwd=3)
+```
+
+
+### Model 2: Displaced geometric distribution
+
+```{r echo=FALSE}
+# Initial values 
+q0 <- length(x)/sum(x)
+
+# Fit 
+geom_displaced <- mle(minuslogl = minus_log_likelihood_geom_displaced, 
+              start = list(q = q0),
+              method = "L-BFGS-B",
+              lower = 1e-7,
+              upper = 1-1e-7)
+
+# MLE estimate
+q_opt <- coef(geom_displaced)
+```
+
+
+```{r echo=FALSE}
+plot(degrees, counts, log="xy", ylim=c(1, 10000),col=viridis(length(degrees)))
+lines(degrees, length(x)*sapply(degrees, function(x) (1-q_opt)^(x-1)*q_opt), col = "darkorchid", lwd=3)
+legend('topright', legend=parse(text=sprintf('DisplacedGeometric(%s)', round(q_opt,2))), col='darkorchid', lwd=3)
+```
+
+### Model 3: Restricted Zeta
+
+
+```{r echo=FALSE}
+#Now we don't need to estimate any parameters. 
+m2logL_zeta_restrict <- 2*minus_log_likelihood_zeta_restrict()
+```
+
+```{r echo=FALSE}
+plot(degrees, counts, log="xy", ylim=c(1, 10000), col=viridis(length(degrees)))
+lines(x_list, length(x)*sapply(x_list, function(x) x^-2/zeta(2, deriv = 0)), col="darkorchid", lwd=3)
+```
+
+### Model 4: Zeta
+
+```{r echo=FALSE}
+# Initial values 
+gamma0 <- 2
+
+# Fit 
+mle_zeta <- mle(minuslogl = minus_log_likelihood_zeta, 
+              start = list(gamma = gamma0),
+              method = "L-BFGS-B",
+              lower = 1+1e-7)
+
+# MLE estimate
+gamma_opt <- coef(mle_zeta)
+```
+
+
+```{r echo=FALSE}
+plot(degrees, counts, log="xy", ylim=c(1,10000), col=viridis(length(degrees)))
+lines(x_list, length(x)*sapply(x_list, function(x) x^(-gamma_opt)/zeta(gamma_opt, deriv = 0)), col="darkorchid", lwd=3)
+legend('topright', legend=parse(text=sprintf('Zeta(%s)',round(gamma_opt,2))), col='darkorchid', lwd=3)
+```
+
+### Model 5: right-truncated Zeta
+
+```{r echo=FALSE}
+# Initial values 
+gamma0 <- 1
+kmax0 <- max(x)
+
+# Fit 
+zeta_rtrunc <- mle(minuslogl = minus_log_likelihood_zeta_rtrunc, 
+              start = list(gamma = gamma0, kmax = kmax0),
+              method = "L-BFGS-B",
+              lower = c(1, max(x)))
+
+# MLE estimate
+gamma_opt2 <- coef(zeta_rtrunc)[1]
+kmax_opt <- coef(zeta_rtrunc)[2]
+```
+
+
+```{r echo=FALSE}
+plot(degrees, counts, log="xy", ylim = c(1,10000), col=viridis(length(degrees)))
+lines(x_list, length(x)*sapply(x_list, function(x) x^(-gamma_opt)/sum((1:kmax_opt)^(-gamma_opt))), col="darkorchid", lwd=3)
+
+legend('topright', legend=parse(text=sprintf('RigthTruncatedZeta(%s, %s)',round(gamma_opt,2), round(kmax_opt,2))), col='darkorchid', lwd=3)
+```
+
+### Model 6: Menzerath-Altmann law
+
+```{r echo=FALSE}
+# Initial values 
+gamma0 <- 1
+delta0 <- 0
+
+# Fit 
+altmann <- mle(minuslogl = minus_log_likelihood_altmann, 
+              start = list(gamma = gamma0, delta = delta0),
+              method = "L-BFGS-B")
+
+# MLE estimate
+gamma_opt3 <- coef(altmann)[1]
+delta_opt <- coef(altmann)[2]
+```
+
+```{r echo=FALSE}
+# Compare the degree spectrums
+cinv <- sum(sapply(1:length(x), function(k) k^(-gamma_opt) * exp(-delta_opt*k)))
+plot(degrees, counts, log="xy", ylim = c(1,10000), col=viridis(length(degrees)))
+lines(x_list, length(x)*sapply(x_list, function(x) x^(-gamma_opt)*exp(-delta_opt*x)/cinv), col="darkorchid", lwd=3)
+
+legend('topright', legend=parse(text=sprintf('Menzerath-Altmann(%s, %s)',round(gamma_opt,2), round(delta_opt,2))), col='darkorchid', lwd=3)
+```
+
+
+```{r echo=FALSE}
+eng_param=c(lambda_opt, q_opt,gamma_opt, gamma_opt2, kmax_opt, gamma_opt3, delta_opt)
+parameters<- data.frame(English=eng_param)
+kable(t(parameters),col.names=c('1:       $\\lambda$', '2:       $q$','4:       $\\gamma$', '$5:       \\gamma_2$', '$kmax$', '6:       $\\gamma_3$', '$\\delta$'), caption = "best fit for model parametrs")
+```
+
+
+### AIC comparison
+
+```{r echo=FALSE, warning=FALSE}
+AIC_pois=get_AIC(attributes(summary(displ_pois))$m2logL, 1, length(x))
+AIC_geom=get_AIC(attributes(summary(geom_displaced))$m2logL, 1, length(x))
+AIC_zetares=get_AIC(m2logL_zeta_restrict, 0, length(x))
+AIC_zeta=get_AIC(attributes(summary(mle_zeta))$m2logL, 1, length(x))
+AIC_zetatrunc=get_AIC(attributes(summary(zeta_rtrunc))$m2logL, 2, length(x))
+AIC_altmann=get_AIC(attributes(summary(altmann))$m2logL, 2, length(x))
+```
+
+```{r echo=FALSE}
+eng_aic=c(AIC_pois, AIC_geom, AIC_zetares, AIC_zeta, AIC_zetatrunc, AIC_altmann)
+result<- data.frame(English=eng_aic-(min(eng_aic)))
+kable(t(result), col.names = c("Displ. Poisson", "Displ. Geom", "Restricted Zeta", "Zeta", "R-T Zeta", "Menzerath-Altmann"), caption = "AIC differences with respect to the best AIC in our ensemble of models")
+```
+
+
+This table represent the so-called AIC difference  $\Delta = AIC - AIC_{best}$,
+
+Is shown that for the English language the best fit is given by the Altman function, closely followed by the zeta function and the truncated zeta function. Let's now repeat the analysis for the other language to check if results hold.
+
+## Analysis for the 10 languages
+
+```{r echo=FALSE, fig.height=20, fig.width=15, warning=FALSE}
+par(mfrow = c(5,2))
+setwd("data/data_out/")
+languages_files <- list.files(".")
+languages <- c('Arabic', 'Basque', 'Catalan', 'Chinese', 'Czech', 'English', 'Greek', 'Hungarian', 'Italian', 'Turkish')
+for(i in 1:length(languages)){
+  # Read the data
+  degree_sequence <- read.table(languages_files[i], header = FALSE)
+  x <- degree_sequence$V1
+  x_list <- 1:max(x)
+  degree_spectrum <- table(x)
+  counts <- unname(degree_spectrum)
+  degrees <- as.numeric(names(degree_spectrum))
+  
+  # M1
+  lambda0 <- list(sum(x)/length(x))
+  displ_pois <- mle(minuslogl = minus_log_likelihood_displaced_pois,
+                start = list(lambda = lambda0),
+                method = "L-BFGS-B",
+                lower = 1e-7)
+  
+  lambda_opt <- coef(displ_pois)
+  # M2
+  q0 <- length(x)/sum(x)
+  geom_displaced <- mle(minuslogl = minus_log_likelihood_geom_displaced, 
+              start = list(q = q0),
+              method = "L-BFGS-B",
+              lower = 1e-7,
+              upper = 1-1e-7)
+  
+  q_opt <- coef(geom_displaced)
+  
+  # M3
+  mlogL_zeta_restrict <- 2*minus_log_likelihood_zeta_restrict()
+  
+  # M4
+  mle_zeta <- mle(minuslogl = minus_log_likelihood_zeta, 
+              start = list(gamma = gamma0),
+              method = "L-BFGS-B",
+              lower = 1+1e-7)
+  
+  gamma_opt <- coef(mle_zeta)
+  # M5
+  kmax0 <- max(x)
+  zeta_rtrunc <- mle(minuslogl = minus_log_likelihood_zeta_rtrunc, 
+              start = list(gamma = gamma0, kmax = kmax0),
+              method = "L-BFGS-B",
+              lower = c(1, max(x)))
+  
+  gamma_opt2 <- coef(zeta_rtrunc)[1]
+  kmax_opt <- coef(zeta_rtrunc)[2]
+  # M6
+  gamma0 <- 1
+  delta0 <- 0
+  altmann <- mle(minuslogl = minus_log_likelihood_altmann, 
+                start = list(gamma = gamma0, delta = delta0),
+                method = "L-BFGS-B",
+                lower = c(0,0))
+  gamma_opt3 <- coef(altmann)[1]
+  delta_opt <- coef(altmann)[2]
+  
+  # AIC
+  AIC_pois=get_AIC(attributes(summary(displ_pois))$m2logL, 1, length(x))
+  AIC_geom=get_AIC(attributes(summary(geom_displaced))$m2logL, 1, length(x))
+  AIC_zetares=get_AIC(m2logL_zeta_restrict, 0, length(x))
+  AIC_zeta=get_AIC(attributes(summary(mle_zeta))$m2logL, 1, length(x))
+  AIC_zetatrunc=get_AIC(attributes(summary(zeta_rtrunc))$m2logL, 2, length(x))
+  AIC_altmann=get_AIC(attributes(summary(altmann))$m2logL, 2, length(x))
+  
+  len_aic=c(AIC_pois, AIC_geom, AIC_zetares, AIC_zeta, AIC_zetatrunc, AIC_altmann)
+  len_parameters=c(lambda_opt, q_opt,gamma_opt, gamma_opt2, kmax_opt, gamma_opt3, delta_opt)
+  
+  if (AIC_zetares<AIC_altmann){
+    plot(degrees, counts, log="xy", ylim=c(1, 10000), col=viridis(length(degrees)), main=paste0(languages[i], ', restricted zeta'))
+    lines(x_list, length(x)*sapply(x_list, function(x) x^-2/zeta(2, deriv = 0)), col="darkorchid", lwd=3)
+  } else {
+    cinv <- sum(sapply(1:length(x), function(k) k^(-gamma_opt) * exp(-delta_opt*k)))
+    plot(degrees, counts, log="xy", ylim = c(1,10000), col=viridis(length(degrees)),main=paste0(languages[i], ', alttman'))
+    lines(x_list, length(x)*sapply(x_list, function(x) x^(-gamma_opt)*exp(-delta_opt*x)/cinv), col="darkorchid", lwd=3)
+
+    legend('topright', legend=parse(text=sprintf('Menzerath-Altmann(%s, %s)',round(gamma_opt,2), round(delta_opt,2))), col='darkorchid', lwd=3)
+  }
+  
+  
+  result[i]=len_aic-(min(len_aic))
+  parameters[i]=len_parameters
+}
+names(result) <- languages
+names(parameters)<- languages
+```
+
+
+
+```{r echo=FALSE}
+kable(t(result), col.names = c("Displ. Poisson", "Displ. Geom", "Restricted Zeta", "Zeta", "R-T Zeta", "Menzerath-Altmann"), caption = "AIC differences with respect to the best AIC in our ensemble of models")
+
+kable(t(parameters),col.names=c('1:       $\\lambda$', '2:       $q$','4:       $\\gamma$', '$5:       \\gamma_2$', '$kmax$', '6:       $\\gamma_3$', '$\\delta$'), caption = "best fit for model parametrs")
+```
+
+# Discussion
+
+The methods we have applied throughout the analysis worked well on simulated test data, which gives us enough confidence to draw the following conclusions about the out-degree distributions in the real data sets under study.
+
+It can be observed that the languages form somehow two "clusters":
+
+  * A bigger one that, as seen with English language, is well described by an Altman function (and also by the zeta and the zeta truncated) and contains all the languages except three.
+  * A smaller one that contains only Catalan, Chinese and Czech that is fitted better by a restricted zeta.
+
+Another interesting remarks is that There is always a small difference between the Zeta and the right-truncated Zeta models. This is in agreement with visual fitting observations in that they yield very similar fits. The later version improves with respect to the former one enough to compensate the additional parameter that it has. However, finding the MLE of the right-truncated Zeta can be problematic in terms of numerical optimization.
+
+In the end, we can conclude by saying that for degree distributions that are close to linear in the log-log scale the Poisson and the geometric distributions seems not appropriate. Instead, either Zeta-related distributions or the Menzerath-Altmann law seem to perform way better.
+
+

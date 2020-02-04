@@ -1,0 +1,363 @@
+---
+title: 'Complex and Social Networks: Lab session 4'
+subtitle: 'Model selection for k^2'
+output:
+  pdf_document:
+    fig_height: 4
+    fig_width: 4
+    toc: yes
+  html_document:
+    toc: yes
+author: Amalia & Egon 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+require(knitr, quietly = T)
+require(xtable, quietly = T)
+require(viridis, quietly = T)
+require(kableExtra, quietly = T)
+```
+
+# Introduction
+
+In this session, we are going to practice on the fit of a non-linear function to data
+using collections of syntactic dependency trees from different languages. In a
+syntactic dependency trees, the vertices are the words (tokens) of a sentence and
+links indicate syntactic dependencies between words [Ferrer-i-Cancho, 2013].
+
+We will  investigate the scaling of $\left\langle k^{2}\right\rangle$ as a function of n, where $\left\langle k^{2}\right\rangle$ is defined as the degree 2nd moment.
+
+## Data preparation
+
+In order to start our analysis, we ensure that the validity of  $\left\langle k^{2}\right\rangle$ holds, where $\left\langle k^{2}\right\rangle$ should satisfy $$4-6 / n \leq\left\langle k^{2}\right\rangle \leq n-1$$ and $$\frac{n}{8(n-1)}\left\langle k^{2}\right\rangle+\frac{1}{2} \leq\langle d\rangle \leq n-1$$ 
+We set as an a acceptance threshold of $e^{-5}$.
+Then we produce a table that summarizes the properties of the syntactic dependency trees for all the languages.
+
+
+```{r echo=FALSE}
+languages= c('Arabic', 'Basque', 'Catalan', 'Chinese', 'Czech', 'English', 'Greek', 'Hungarian', 'Italian', 'Turkish')
+
+result=data.frame(row.names =c('N', 'mi', 'std', 'km', 'kstd'))
+for (lenguage in languages){
+  path=paste('data/', lenguage, '_dependency_tree_metrics.txt', sep='')
+  my_data <- read.table(path, header=FALSE,  stringsAsFactors=FALSE, quote="", comment.char = "", sep=" ")
+  nodes=length(my_data$V1)
+  for (i in 1:nodes){
+    row=(my_data[i,])
+    n=as.numeric(row[1])
+    k2=as.numeric(row[2])
+    d=as.numeric(row[3])
+
+    eq1= 4-6/n <= k2+1e-05 && k2 <= n-1
+    eq2=(n/(8*(n-1)))* k2+ 1/2 <= d && d <= n-1
+    
+    count=0
+    if (eq1!= T){
+      print(cat(lenguage,'error on equation1', 4-6/n, k2, 4-6/n-k2))
+      count=count+1
+    }
+    if (eq2!= T){
+      print(cat(lenguage,'error on equation2'))
+      count=count+1
+    }
+    
+  }
+  
+  nmean=mean(my_data$V1)
+  nstd=sd(my_data$V1)
+  k2mean=mean(my_data$V2)
+  k2std=sd(my_data$V2)
+  result[lenguage]=c(nodes, nmean, nstd, k2mean, k2std)
+}
+print(paste0(count, ' error detected'))
+kable(t(result), col.names = c("N", "$\\mu_n$", "$\\sigma_n$", "$\\mu_k$", "$\\sigma_k$"), escape= FALSE,"latex", booktabs = T) %>%
+  kable_styling(position = "center")
+```
+
+ 
+To have a glance of our data set and to check also visually the bounds, we plot below the  preliminary visualizations of all the languages.
+
+
+```{r echo=FALSE, fig.height=20, fig.width=15}
+languages <- c('Arabic', 'Basque', 'Catalan', 'Chinese', 'Czech', 'English', 'Greek', 'Hungarian', 'Italian', 'Turkish')
+par(mfrow= c(5,2))
+for(lenguage in languages){
+  path=paste('./data/', lenguage, '_dependency_tree_metrics.txt', sep='')
+  data = read.table(path, header = FALSE)
+  colnames(data) = c("vertices","degree_2nd_moment", "mean_length")
+  data = data[order(data$vertices), ]
+  mean_data = aggregate(data, list(data$vertices), mean)
+  
+  plot(data$vertices, data$degree_2nd_moment,
+       xlab = "vertices", ylab = "degree 2nd moment", log = "xy", ylim = c(1, 35),
+       col=viridis(length(data$vertices)), main=lenguage)
+
+  lines(mean_data$vertices,mean_data$degree_2nd_moment, col = "orchid", lwd=3)
+  
+  lines(data$vertices,(1 - 1/data$vertices)*(5 - 6/data$vertices), col = "darkorchid", lwd=3)
+  
+  lines(data$vertices,4-6/data$vertices, col = "Darkred", lwd=3)
+  
+  lines(data$vertices,data$vertices-1, col = "Darkred", lwd=3)
+  
+  legend('topright', legend=c('bounds', 'null model', 'mean of aggregates'),
+         col=c('darkred','darkorchid','orchid'),  lwd=3)
+}
+```
+
+# Results
+
+Following, we present the results of our analysis. Firstly, we present the plots of the original data with the best fitted model and null model. Following, in Table 1 we present residual standard error of each model and in Table 2 the AIC of reach model. Finally, in Table 3 we present the AIC differences with respect to the best AIC in our ensemble of models.
+
+```{r echo=FALSE}
+AIC<- data.frame(matrix(nrow = 10, ncol = 0))
+result <- data.frame(matrix(nrow = 10, ncol = 0))
+parameters <- data.frame(matrix(nrow = 19, ncol = 0))
+ss <- data.frame(matrix(nrow = 10, ncol = 0))
+```
+
+
+```{r echo=FALSE, fig.height=20, fig.width=15}
+languages <- c('Arabic', 'Basque', 'Catalan', 'Chinese', 'Czech', 'English', 'Greek', 'Hungarian', 'Italian', 'Turkish')
+par(mfrow= c(5,2))
+for(lenguage in languages){
+  path=paste('./data/', lenguage, '_dependency_tree_metrics.txt', sep='')
+  data = read.table(path, header = FALSE)
+  colnames(data) = c("vertices","degree_2nd_moment", "mean_length")
+  data = data[order(data$vertices), ]
+  mean_data = aggregate(data, list(data$vertices), mean)
+  
+
+
+  #MODELS
+  
+  #model 0
+  
+  RSS <- abs(sum((mean_data$degree_2nd_moment-((1 - 1/mean_data$vertices)*(5 -
+        6/mean_data$vertices))^2)))
+  n <- length(mean_data$vertices)
+  p <- 0
+  s_0 <- sqrt(RSS/(n - p))
+  AIC_0 <- n*log(2*pi) + n*log(RSS/n) + n + 2*(p + 1)
+  AIC_0
+    
+  #model 1
+  
+  b_initial = 0.5
+  nonlinear_model_1 = nls(degree_2nd_moment~(vertices/2)^b,data=mean_data,
+                        start = list( b = b_initial))
+  AIC_1=AIC(nonlinear_model_1)
+  s_1=sqrt(deviance(nonlinear_model_1)/df.residual(nonlinear_model_1))
+  b_opt_1= as.numeric(coef(nonlinear_model_1)[1])
+  
+  #model 2
+  linear_model = lm(log(degree_2nd_moment)~log(vertices), data)
+  a_initial = exp(coef(linear_model)[1])
+  b_initial = coef(linear_model)[2]
+  nonlinear_model_2 = nls(degree_2nd_moment~a*vertices^b,data=mean_data,
+                        start = list(a = a_initial, b = b_initial))
+  AIC_2=AIC(nonlinear_model_2)
+  s_2=sqrt(deviance(nonlinear_model_2)/df.residual(nonlinear_model_2))
+  a_opt_2= as.numeric(coef(nonlinear_model_2)[1])
+  b_opt_2= as.numeric(coef(nonlinear_model_2)[2])
+  
+  #model 3
+  
+  a_initial = 10
+  c_initial = 0.0005
+  nonlinear_model_3 = nls(degree_2nd_moment~a*exp(c*vertices),data=mean_data,
+                        start = list(a = a_initial,  c = c_initial))
+  AIC_3=AIC(nonlinear_model_3)
+  s_3=sqrt(deviance(nonlinear_model_3)/df.residual(nonlinear_model_3))
+  a_opt_3= as.numeric(coef(nonlinear_model_3)[1])
+  c_opt_3= as.numeric(coef(nonlinear_model_3)[2])
+  
+  #model 4
+  
+  a_initial = 1
+  nonlinear_model_4 = nls(degree_2nd_moment~a*log(vertices),data=mean_data,
+                        start = list( a = a_initial))
+  AIC_4=AIC(nonlinear_model_4)
+  s_4=sqrt(deviance(nonlinear_model_4)/df.residual(nonlinear_model_4))
+  a_opt_4= as.numeric(coef(nonlinear_model_4)[1])  
+  
+  #model 1+
+  
+  b_initial = 4
+  d_initial = 1
+  nonlinear_model_1pl = nls(degree_2nd_moment~(vertices/2)^b+d,data=mean_data,
+                        start = list( b = b_initial, d=d_initial))
+  AIC_1pl=AIC(nonlinear_model_1pl)
+  s_1pl=sqrt(deviance(nonlinear_model_1pl)/df.residual(nonlinear_model_1pl))
+  b_opt_1pl= as.numeric(coef(nonlinear_model_1pl)[1]) 
+  d_opt_1pl= as.numeric(coef(nonlinear_model_1pl)[2])
+  
+  
+  #model 2+
+  
+  a_initial = -8
+  b_initial = -0.55
+  d_initial = 6.5
+  nonlinear_model_2pl = nls(degree_2nd_moment~(a*(vertices^b)) + d,data=mean_data, algorithm = 'port',
+                            lower=c(-10, -10, -10), upper=c(10, 10, 10),
+                          start = list(a = a_initial, b = b_initial,d= d_initial))
+  AIC_2pl=AIC(nonlinear_model_2pl)
+  s_2pl=sqrt(deviance(nonlinear_model_2pl)/df.residual(nonlinear_model_2pl))
+  a_opt_2pl= as.numeric(coef(nonlinear_model_2pl)[1])
+  b_opt_2pl= as.numeric(coef(nonlinear_model_2pl)[2])
+  d_opt_2pl= as.numeric(coef(nonlinear_model_2pl)[3])
+  
+  #model 3+
+  
+  a_initial = -4.8
+  c_initial = 0.006
+  d_initial = 5
+  nonlinear_model_3pl = nls(degree_2nd_moment~a*exp(c*vertices)+d,data=mean_data,
+                            algorithm = 'port', lower=c(-10, -10, -10), upper=c(10, 10, 10),
+                          start = list(a = a_initial, c = c_initial,d= d_initial))
+  AIC_3pl=AIC(nonlinear_model_3pl)
+  s_3pl=sqrt(deviance(nonlinear_model_3pl)/df.residual(nonlinear_model_3pl))
+  a_opt_3pl= as.numeric(coef(nonlinear_model_3pl)[1])
+  c_opt_3pl= as.numeric(coef(nonlinear_model_3pl)[2])
+  d_opt_3pl= as.numeric(coef(nonlinear_model_3pl)[3])  
+  
+  #model 4+
+  
+  a_initial = 1
+  d_initial = 0
+  nonlinear_model_4pl = nls(degree_2nd_moment~a*log(vertices)+d,data=mean_data,
+                        start = list( a = a_initial, d = d_initial))
+  AIC_4pl=AIC(nonlinear_model_4pl)
+  s_4pl=sqrt(deviance(nonlinear_model_4pl)/df.residual(nonlinear_model_4pl))
+  a_opt_4pl= as.numeric(coef(nonlinear_model_4pl)[1])
+  d_opt_4pl= as.numeric(coef(nonlinear_model_4pl)[2])
+      
+  
+  #model 5
+  
+  
+  a_initial = 1.5
+  b_initial = 0.5
+  c_initial = 0.001
+  nonlinear_model_5 = nls(degree_2nd_moment~a*vertices^b *exp(c*vertices),data=mean_data,
+                          start = list(a = a_initial, b = b_initial,c= c_initial))
+  AIC_5=AIC(nonlinear_model_5)
+  s_5=sqrt(deviance(nonlinear_model_5)/df.residual(nonlinear_model_5))
+  a_opt_5= as.numeric(coef(nonlinear_model_5)[1])
+  b_opt_5= as.numeric(coef(nonlinear_model_5)[2])
+  c_opt_5= as.numeric(coef(nonlinear_model_5)[3])
+  
+  
+  
+  #results
+  
+  len_aic=c(AIC_0,AIC_1,AIC_2,AIC_3,AIC_4,AIC_1pl, AIC_2pl, AIC_3pl, AIC_4pl, AIC_5)
+  len_parameters=c(b_opt_1, a_opt_2,b_opt_2, a_opt_3, c_opt_3, a_opt_4, b_opt_1pl,
+                   d_opt_1pl,a_opt_2pl, b_opt_2pl, d_opt_2pl, a_opt_3pl, c_opt_3pl,
+                   d_opt_3pl,a_opt_4pl, d_opt_4pl, a_opt_5, b_opt_5, c_opt_5)
+  len_result=len_aic-(min(len_aic))
+  s_result=c(s_0,s_1,s_2,s_3,s_4,s_1pl, s_2pl, s_3pl, s_4pl, s_5)
+  
+  AIC[lenguage]=len_aic
+  parameters[lenguage]=len_parameters
+  result[lenguage]=len_result
+  ss[lenguage]=s_result
+  
+  plot(data$vertices, data$degree_2nd_moment,
+       xlab = "vertices", ylab = "degree 2nd moment", log = "xy", ylim = c(1, 35),
+       col=viridis(length(data$vertices)), main=lenguage)
+  
+  lines(data$vertices,(1 - 1/data$vertices)*(5 - 6/data$vertices), col = "darkorchid", lwd=3)
+  
+  if (lenguage=='Chinese'){
+    lines(mean_data$vertices, nonlinear_model_3pl$m$fitted(), col = "darkred", lwd=3)
+    legend('topright', legend=c('model 3+', 'null model'),
+         col=c('darkred','dark orchid'),  lwd=3)
+  }
+  else if (lenguage=='Hungarian'){
+    lines(mean_data$vertices, nonlinear_model_4pl$m$fitted(), col = "darkred", lwd=3)
+    legend('topright', legend=c('model 4+', 'null model'),
+         col=c('darkred','dark orchid'),  lwd=3)
+  }
+  else{
+    lines(mean_data$vertices, nonlinear_model_2pl$m$fitted(), col = "darkred", lwd=3)
+    legend('topright', legend=c('model 2+', 'null model'),
+         col=c('darkred','dark orchid'),  lwd=3)
+  }
+}
+
+
+
+```
+
+
+```{r echo=FALSE}
+kable(t(ss), col.names = c("0", "1", "2", "3", "4", "1+", "2+", "3+", "4+", "5"), caption = "residual standard error of each model", format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options="scale_down")
+
+
+kable(t(AIC), col.names = c("0", "1", "2", "3", "4", "1+", "2+", "3+","4+", "5"), caption = "Akaike information criterion of each model", format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options="scale_down")
+
+kable(t(result), col.names = c("0", "1", "2", "3", "4", "1+", "2+", "3+", "4+", "5"), caption = "AIC differences with respect to the best AIC in our ensemble of models", format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options="scale_down")
+row.names(parameters)=c("1: b", "2: a", "2: b", "3: a", "3: c", "4: a", "1+: b", "1+: d", "2+: a", "2+: b", "2+: d", "3+: a", "3+: c", "3+: d", "4+: a", "4+: b", "5: a", "5: b", "5: c")
+kable(parameters, caption = "best fittings for model parameters", format="latex", booktabs=TRUE) %>% 
+  kable_styling(latex_options="scale_down")
+
+
+```
+
+
+
+# Discussion
+
+The best model seems to be, in most cases, the model 2+, $f(n) = an^b + d$. The fit seems to be good, both visually and in terms of AIC, we have usually a better fit than the fit of the null model.
+
+We have some exceptions: 
+The best model for the Czech seems to be the null model, but we think that is not significant because seems very hard in general to find good fits for it, maybe due to the high numbers of heavy outliers.
+
+The best model for Hungarian is 4+, closely followed by model 4. These types of models seems to really capture it, in fact, we have a really different fit in respect to the null model.
+
+The best model for Chinese is 3+, but 2+ performs quite good as well.
+
+To conclude, we can say that the 2+ model seems to outperform all the others method; even when is not the best, it performs well. 
+
+With these results it is very interesting to see that the linguistics networks that we are studying are explained indeed by a power law for the majority of the cases. We see how even for these cases that we study within our lab session show interesting perspective we can have by studying languages from a network perspective and how this approach can serve in understanding their universal properties.
+
+
+# Methods 
+
+## Homoschedasticity and choice of aggregated data
+
+```{r echo=FALSE, fig.height=20, fig.width=15}
+par(mfrow= c(5,2))
+for (lenguage in languages){
+    path=paste('data/', lenguage, '_dependency_tree_metrics.txt', sep='')
+    language =  read.table(path, header=FALSE,  stringsAsFactors=FALSE, quote="", comment.char = "", sep=" ")
+    colnames(language) <- c("vertices","degree_2nd_moment", "mean_length")
+    variances <- aggregate(language, list(language$vertices), var)
+    plot(variances$degree_2nd_moment, main =lenguage, xlab='',
+         col=viridis(length(variances$degree_2nd_moment)))
+}
+```
+
+As we see from the plots above, the points of the degree second moment show a big variability as the number of vertices grow. As well as a digitization of the points, since for the same number of vertices we see the different number for the degree, which result to what we see above as vertical lines of points. Additionally to these plots, we want to check if the assumption of homoscedasticity holds. Following, we see that for each language the variance of points as a function of the number of vertices. For all cases we see that there is no homogeneity of the variance. For this reasons we decided to proceed our analysis using the aggregated version of the data. Since we will take the average of all point for a specific number of vertices, it will serves us in having a more homogeneous version of the data.
+
+## fitting the models
+
+We fit all the models explained in the task (since we have two times model 4, we called the model in the advanced section "model 5").
+
+We used the nls(..) function. For model with just one or two parameters, we discovered that is usually not important to give very precise starting point (unless in some cases where some specific starting point caused the failure of the algorithm), because the fit is very easy and the tedious search for better starting points didn't seem to reward us in terms of better algorithm (we usually don't need a lot of iterations).
+
+Things became tricky once we introduced more complicated models: to fit 3 or more parameters seemed a completely different task for our poor optimizer.
+
+We tried to change the algorithm of nls(..) by setting it to 'port' that let us impose some bounds on the variable, but without a good starting point it only solved the problem by squishing one of the 3 parameters to the bound and then solving for the others.
+
+The 'heuristic' that we used to get some results is this: we found good parameters for the Catalan data set that seems overall easier to work with, and then we set that values as starting points for other languages, letting the bounds be an interval containing them, not too small to constrain too much, but not to big to made the algorithm fail.
+
+However, this doesn't seem to help for the model 5+; 4 parameters are really difficult to recover. We tried to set the nls algorithm to stop after some iterations, but the results were not satisfactory, so we decided to not include that.
